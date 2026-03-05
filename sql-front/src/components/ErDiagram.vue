@@ -4,21 +4,35 @@
     <template #header>
       <div class="card-header">
         <div class="header-left">
-          <i class="el-icon-connection"></i>
-          <span>ER 图预览</span>
+          <div class="header-icon-wrapper">
+            <el-icon><Connection /></el-icon>
+          </div>
+          <div class="header-title">
+            <h3>ER 图预览</h3>
+            <small>Interactive Visualizer</small>
+          </div>
         </div>
         <div class="header-right">
-          <el-button type="primary" @click="autoLayout" style="margin-right: 10px" :icon="Refresh">
+          <el-button 
+            class="action-btn-refresh"
+            @click="autoLayout" 
+            :icon="Refresh"
+          >
             一键排版
           </el-button>
-          <el-button type="success" @click="openExportDialog" :icon="Download">
-            导出图片
+          <el-button 
+            type="success" 
+            class="action-btn-export"
+            @click="openExportDialog" 
+            :icon="Download"
+          >
+            导出图像
           </el-button>
         </div>
       </div>
     </template>
+
     <div class="diagram-wrapper">
-      <!-- 使用LayoutSettings组件 -->
       <LayoutSettings 
         v-model="showLayoutControls"
         v-model:entitySpacing="entitySpacing"
@@ -35,17 +49,17 @@
       
       <el-button 
         v-if="!showLayoutControls" 
-        class="layout-settings-button" 
+        class="layout-settings-trigger" 
         size="small" 
         @click="showLayoutControls = true"
         :icon="Setting"
       >
         布局设置
       </el-button>
+
       <div ref="diagramDiv" class="diagram-container"></div>
     </div>
-    
-    <!-- 添加 ExportDialog 组件 -->
+
     <ExportDialog 
       v-model="isExportDialogVisible" 
       @confirm="handleExportConfirm"
@@ -53,6 +67,140 @@
   </el-card>
 </template>
 
+
+<style lang="scss" scoped>
+.diagram-output {
+  height: calc(100vh - 120px); // 与左侧 SQL 卡片对齐高度
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #ebeef5;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+
+  &:hover {
+    box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.08);
+  }
+
+  :deep(.el-card__header) {
+    background: #ffffff;
+    border-bottom: 1px solid #f0f0f0;
+    padding: 12px 20px;
+  }
+
+  :deep(.el-card__body) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+  }
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    .header-icon-wrapper {
+      width: 32px;
+      height: 32px;
+      background: #f0f9eb; // 预览区使用浅绿色系区分
+      color: #67c23a;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-title {
+      display: flex;
+      flex-direction: column;
+      h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: #303133;
+        margin: 0;
+        line-height: 1.2;
+      }
+      small {
+        font-size: 11px;
+        color: #909399;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+    }
+  }
+
+  .header-right {
+    display: flex;
+    gap: 10px;
+
+    // 排版按钮
+    .action-btn-refresh {
+      border-radius: 8px;
+      background: #ecf5ff;
+      color: #409eff;
+      border: 1px solid #d9ecff;
+      &:hover {
+        background: #409eff;
+        color: #fff;
+      }
+    }
+
+    // 导出按钮
+    .action-btn-export {
+      border-radius: 8px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(103, 194, 58, 0.2);
+      &:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(103, 194, 58, 0.3);
+      }
+    }
+  }
+}
+
+.diagram-wrapper {
+  flex: 1;
+  padding: 16px;
+  background-color: #f5f7f9; // 稍微深一点的底色突出白色画布
+  position: relative;
+  overflow: hidden;
+}
+
+.layout-settings-trigger {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 10;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.diagram-container {
+  width: 100%;
+  height: 100%;
+  background-color: white;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.02); // 内部微弱阴影增加空间感
+
+  :deep(canvas) {
+    outline: none;
+    // 强制让网格背景更淡一些，如果 GoJS 未设置的话
+  }
+}
+</style>
 <script>
 import { ref, onMounted, nextTick } from 'vue'
 import { Download, Refresh, Setting } from '@element-plus/icons-vue'
@@ -494,98 +642,3 @@ export default {
   }
 }
 </script>
-
-<style lang="scss" scoped>
-.diagram-output {
-  height: calc(100vh - 140px);
-  transition: all 0.3s ease;
-  border: none;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  
-  &:hover {
-    box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.15);
-  }
-
-  :deep(.el-card__header) {
-    padding: 16px 20px;
-    border-bottom: 1px solid #ebeef5;
-    background: #fff;
-  }
-  
-  :deep(.el-card__body) {
-    height: calc(100% - 60px);
-    padding: 0;
-    position: relative;
-  }
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 16px;
-    font-weight: 600;
-    color: #303133;
-
-    i {
-      font-size: 18px;
-      color: #67c23a;
-    }
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-  }
-}
-
-.diagram-wrapper {
-  height: 100%;
-  padding: 16px;
-  background-color: #f8f9fa;
-  position: relative;
-}
-
-.layout-settings-button {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  z-index: 9;
-}
-
-.diagram-container {
-  width: 100%;
-  height: 100%;
-  background-color: white;
-  position: relative;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  transition: all 0.3s ease;
-
-  &:hover {
-    border-color: #c0c4cc;
-  }
-
-  :deep(div[id^="diagram"]) {
-    width: 100% !important;
-    height: 100% !important;
-    position: absolute !important;
-    top: 0;
-    left: 0;
-    background: white;
-  }
-
-  :deep(canvas) {
-    outline: none;
-  }
-
-  :deep(.primary-key) {
-    text-decoration: underline !important;
-  }
-}
-</style> 

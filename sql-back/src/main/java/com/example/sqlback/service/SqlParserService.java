@@ -10,6 +10,7 @@ import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.Statements;
 import net.sf.jsqlparser.statement.create.table.CreateTable;
 import net.sf.jsqlparser.statement.create.table.ColumnDefinition;
+import net.sf.jsqlparser.statement.create.table.Index;
 import net.sf.jsqlparser.statement.create.table.ForeignKeyIndex;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -25,175 +27,199 @@ public class SqlParserService {
     public List<TableInfo> parseSql(String sql) {
         List<TableInfo> tables = new ArrayList<>();
         try {
-            log.info("开始解析SQL: {}", sql);
-
-            // 预处理 SQL，移除 UNIQUE INDEX 语句
+            log.info("开始解析SQL...");
             String processedSql = preprocessSql(sql);
-
-            // 解析多个SQL语句
             Statements statements = CCJSqlParserUtil.parseStatements(processedSql);
-            log.info("成功解析SQL语句，共有{}条语句", statements.getStatements().size());
 
             for (Statement statement : statements.getStatements()) {
-                log.debug("处理语句: {}", statement);
                 if (statement instanceof CreateTable) {
-                    CreateTable createTable = (CreateTable) statement;
-                    log.info("解析CREATE TABLE语句: {}", createTable.getTable().getName());
-                    TableInfo tableInfo = parseCreateTable(createTable);
-                    tables.add(tableInfo);
+                    TableInfo tableInfo = parseCreateTable((CreateTable) statement);
+                    if (tableInfo != null) {
+                        tables.add(tableInfo);
+                        log.info("解析成功，识别到表名: {}, 业务名: {}",
+                                tableInfo.getTableName(), tableInfo.getComment());
+                    }
                 }
             }
-
-            log.info("SQL解析完成，共解析出{}个表", tables.size());
             return tables;
         } catch (JSQLParserException e) {
-            log.error("SQL解析错误: {}", e.getMessage());
-            throw new RuntimeException("SQL语法错误: " + e.getMessage());
+            log.error("SQL语法错误: {}", e.getMessage());
+            throw new RuntimeException("SQL语法解析失败: " + e.getMessage());
         } catch (Exception e) {
-            log.error("处理SQL时发生意外错误", e);
+            log.error("解析异常", e);
             throw new RuntimeException("处理SQL时发生错误: " + e.getMessage());
         }
     }
 
+    /**
+     * 预处理SQL：移除Navicat特有的物理层描述，避免干扰JSQLParser提取COMMENT
+     */
     private String preprocessSql(String sql) {
-        // 使用正则表达式移除 UNIQUE INDEX 语句
-        String[] lines = sql.split("\n");
-        StringBuilder processedSql = new StringBuilder();
+        if (sql == null || sql.trim().isEmpty()) return "";
+
+        // 1. 移除常见的物理层选项，这些选项常导致Options列表解析偏移
+        sql = sql.replaceAll("(?i)ENGINE\\s*=\\s*\\w+", "");
+        sql = sql.replaceAll("(?i)AUTO_INCREMENT\\s*=\\s*\\d+", "");
+        sql = sql.replaceAll("(?i)ROW_FORMAT\\s*=\\s*\\w+", "");
+        sql = sql.replaceAll("(?i)CHARACTER\\s+SET\\s*=\\s*\\w+", "");
+        sql = sql.replaceAll("(?i)COLLATE\\s*=\\s*\\w+", "");
+
+        String[] lines = sql.split("\\r?\\n");
+        List<String> cleanedLines = new ArrayList<>();
 
         for (String line : lines) {
-            // 跳过包含 UNIQUE INDEX 的行
-            if (!line.trim().toUpperCase().contains("UNIQUE INDEX")) {
-                processedSql.append(line).append("\n");
+            String upperLine = line.trim().toUpperCase();
+            // 过滤掉普通 INDEX 行
+            boolean isDiscardLine = (upperLine.contains("INDEX") || upperLine.contains("KEY"))
+                    && !upperLine.contains("PRIMARY KEY")
+                    && !upperLine.contains("FOREIGN KEY")
+                    && !upperLine.startsWith("CREATE TABLE");
+
+            if (!isDiscardLine) {
+                cleanedLines.add(line);
             }
         }
 
-        return processedSql.toString();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < cleanedLines.size(); i++) {
+            String current = cleanedLines.get(i);
+            String next = "";
+            for (int j = i + 1; j < cleanedLines.size(); j++) {
+                if (!cleanedLines.get(j).trim().isEmpty()) {
+                    next = cleanedLines.get(j).trim();
+                    break;
+                }
+            }
+
+            // 修复悬挂逗号
+            if (current.trim().endsWith(",") && next.startsWith(")")) {
+                current = current.substring(0, current.lastIndexOf(","));
+            }
+            sb.append(current).append("\n");
+        }
+
+        String result = sb.toString().replaceAll(",\\s*\\)", "\n)");
+        log.debug("预处理后的SQL:\n{}", result);
+        return result;
     }
 
     private TableInfo parseCreateTable(CreateTable createTable) {
         TableInfo tableInfo = new TableInfo();
-        String tableName = createTable.getTable().getName();
-        tableInfo.setTableName(tableName);
+
+        // 1. 提取物理表名
+        String rawTableName = createTable.getTable().getName();
+        String cleanTableName = rawTableName.replaceAll("[`\"'\\[\\]]", "");
+        tableInfo.setTableName(cleanTableName);
 
         List<ColumnInfo> columns = new ArrayList<>();
         List<String> primaryKeys = new ArrayList<>();
         List<ForeignKeyInfo> foreignKeys = new ArrayList<>();
 
-        // 解析列定义
-        log.debug("开始解析表{}的列定义", tableName);
-        for (ColumnDefinition col : createTable.getColumnDefinitions()) {
-            ColumnInfo columnInfo = new ColumnInfo();
-            columnInfo.setName(col.getColumnName());
-            columnInfo.setType(col.getColDataType().getDataType());
-            columnInfo.setNullable(true); // 默认可为空
+        // 2. 解析列信息
+        if (createTable.getColumnDefinitions() != null) {
+            for (ColumnDefinition col : createTable.getColumnDefinitions()) {
+                ColumnInfo columnInfo = new ColumnInfo();
+                String colName = col.getColumnName().replaceAll("[`\"']", "");
+                columnInfo.setName(colName);
+                columnInfo.setType(col.getColDataType().toString());
 
-            // 提取列注释
-            String columnComment = col.getColumnSpecs().stream()
-                .filter(spec -> spec.toUpperCase().contains("COMMENT"))
-                .map(spec -> {
-                    // 添加调试日志
-                    log.debug("列规格列表: {}", col.getColumnSpecs());
-                    int commentIndex = col.getColumnSpecs().indexOf(spec);
-                    if (commentIndex >= 0 && commentIndex + 1 < col.getColumnSpecs().size()) {
-                        String comment = col.getColumnSpecs().get(commentIndex + 1);
-                        log.debug("找到注释内容: [{}]", comment);
-                        // 去除单引号
-                        return comment.replaceAll("^'|'$", "");
+                List<String> specs = col.getColumnSpecs();
+                String comment = colName; // 默认注释为列名
+                boolean nullable = true;
+
+                if (specs != null) {
+                    List<String> upperSpecs = specs.stream().map(String::toUpperCase).collect(Collectors.toList());
+                    if (upperSpecs.contains("PRIMARY") && upperSpecs.contains("KEY")) {
+                        primaryKeys.add(colName);
                     }
-                    return col.getColumnName();
-                })
-                .findFirst().orElse(col.getColumnName());
-            columnInfo.setComment(columnComment);
-            log.info("列{}的注释: {}", col.getColumnName(), columnInfo.getComment());
-
-            // 检查列约束
-            if (col.getColumnSpecs() != null) {
-                String columnSpecs = String.join(" ", col.getColumnSpecs()).toUpperCase();
-                if (columnSpecs.contains("PRIMARY KEY")) {
-                    primaryKeys.add(col.getColumnName());
-                    log.info("找到主键: {}.{}", tableName, col.getColumnName());
+                    if (upperSpecs.contains("NOT") && upperSpecs.contains("NULL")) {
+                        nullable = false;
+                    }
+                    for (int i = 0; i < specs.size(); i++) {
+                        if ("COMMENT".equalsIgnoreCase(specs.get(i)) && i + 1 < specs.size()) {
+                            comment = specs.get(i + 1).replaceAll("^['\"]|['\"]$", "");
+                            break;
+                        }
+                    }
                 }
-                if (columnSpecs.contains("NOT NULL")) {
-                    columnInfo.setNullable(false);
-                }
+                columnInfo.setNullable(nullable);
+                columnInfo.setComment(comment);
+                columns.add(columnInfo);
             }
-
-            columns.add(columnInfo);
         }
 
-        // 提取表注释
-        String tableComment = createTable.getTableOptionsStrings().stream()
-                .filter(option -> option.equalsIgnoreCase("COMMENT"))
-                .findFirst()
-                .map(commentKey -> {
-                    int commentIndex = createTable.getTableOptionsStrings().indexOf(commentKey);
-                    List<String> options = createTable.getTableOptionsStrings();
-
-                    // 处理两种格式：
-                    // 1. COMMENT '内容'
-                    // 2. COMMENT = '内容'
-                    if (commentIndex + 1 < options.size()) {
-                        String nextToken = options.get(commentIndex + 1);
-
-                        // 格式1: 直接跟随注释内容
-                        if (nextToken.startsWith("'")) {
-                            String fullComment = String.join(" ", options.subList(commentIndex + 1, options.size()));
-                            return parseQuotedString(fullComment);
-                        }
-
-                        // 格式2: 包含等号
-                        if (nextToken.equals("=") && commentIndex + 2 < options.size()) {
-                            String commentValue = options.get(commentIndex + 2);
-                            return parseQuotedString(commentValue);
-                        }
-                    }
-
-                    log.warn("无法解析表注释格式: {}", options);
-                    return tableName;
-                })
-                .orElse(tableName);
-
-        tableInfo.setComment(tableComment);
-        log.info("表{}的注释: {}", tableName, tableInfo.getComment());
-
-
-
-        // 解析外键约束
+        // 3. 解析主键/外键索引
         if (createTable.getIndexes() != null) {
-            log.debug("开始解析表{}的外键约束", tableName);
-            for (var index : createTable.getIndexes()) {
-                if (index instanceof ForeignKeyIndex) {
-                    ForeignKeyIndex fk = (ForeignKeyIndex) index;
-                    ForeignKeyInfo fkInfo = new ForeignKeyInfo();
-                    fkInfo.setColumnName(fk.getColumns().get(0).getColumnName());
-                    fkInfo.setReferenceTable(fk.getTable().getName());
-                    fkInfo.setReferenceColumn(fk.getReferencedColumnNames().get(0));
-                    foreignKeys.add(fkInfo);
-                    log.info("找到外键: {}.{} -> {}.{}",
-                        tableName, fkInfo.getColumnName(),
-                        fkInfo.getReferenceTable(), fkInfo.getReferenceColumn());
+            for (Index index : createTable.getIndexes()) {
+                String type = index.getType();
+                if ("PRIMARY KEY".equalsIgnoreCase(type)) {
+                    index.getColumnsNames().forEach(name ->
+                            primaryKeys.add(name.replaceAll("[`\"']", "")));
+                } else if (index instanceof ForeignKeyIndex) {
+                    ForeignKeyIndex fkIndex = (ForeignKeyIndex) index;
+                    ForeignKeyInfo fk = new ForeignKeyInfo();
+                    fk.setColumnName(fkIndex.getColumnsNames().get(0).replaceAll("[`\"']", ""));
+                    fk.setReferenceTable(fkIndex.getTable().getName().replaceAll("[`\"']", ""));
+                    if (fkIndex.getReferencedColumnNames() != null && !fkIndex.getReferencedColumnNames().isEmpty()) {
+                        fk.setReferenceColumn(fkIndex.getReferencedColumnNames().get(0).replaceAll("[`\"']", ""));
+                    }
+                    foreignKeys.add(fk);
                 }
             }
         }
+
+        // 4. 关键修复：鲁棒提取表注释（中文表名）
+        String tableComment = extractTableComment(createTable);
+        tableInfo.setComment((tableComment != null && !tableComment.isEmpty()) ? tableComment : cleanTableName);
 
         tableInfo.setColumns(columns);
         tableInfo.setPrimaryKeys(primaryKeys);
         tableInfo.setForeignKeys(foreignKeys);
-
-        log.info("表{}解析完成: {}列, {}个主键, {}个外键",
-            tableName, columns.size(), primaryKeys.size(), foreignKeys.size());
-
+        String result = tableInfo.toString();
+        log.debug("最终预处理后的合法SQL:\n{}", result);
         return tableInfo;
     }
-    // 辅助方法：解析带引号的字符串
-    private String parseQuotedString(String input) {
-        // 匹配单引号或双引号包裹的内容
-        Pattern pattern = Pattern.compile("^(['\"])(.*)\\1$");
-        Matcher matcher = pattern.matcher(input);
+
+    /**
+     * 辅助方法：从表选项中精准定位 COMMENT
+     */
+    private String extractTableComment(CreateTable createTable) {
+        List<?> options = createTable.getTableOptionsStrings();
+        if (options == null) return null;
+
+        // 1. 将所有选项合并成一个大的字符串，方便统一搜索
+        String allOptions = options.stream()
+                .map(Object::toString)
+                .collect(Collectors.joining(" "));
+
+        log.debug("待解析的表选项字符串: {}", allOptions);
+
+        // 2. 使用正则匹配 COMMENT 后面的内容
+        // 匹配模式：COMMENT 后面可能跟着空格或等号，然后是被单引号或双引号包裹的内容
+        Pattern pattern = Pattern.compile("(?i)COMMENT\\s*=?\\s*['\"]([^'\"]+)['\"]");
+        Matcher matcher = pattern.matcher(allOptions);
+
         if (matcher.find()) {
-            return matcher.group(2);
+            return matcher.group(1); // 直接返回捕获组中的内容（即中文注释）
         }
-        // 如果未匹配到完整引号，尝试直接处理
-        return input.replaceAll("^['\"]|['\"]$", "");
+
+        // 3. 备选方案：如果正则没搜到，尝试之前的遍历逻辑（适配某些特殊的 JSQLParser 版本）
+        for (int i = 0; i < options.size(); i++) {
+            String op = options.get(i).toString();
+            if ("COMMENT".equalsIgnoreCase(op) && i + 1 < options.size()) {
+                return cleanCommentValue(options.get(i + 1).toString());
+            }
+            if (op.toUpperCase().startsWith("COMMENT")) {
+                return cleanCommentValue(op);
+            }
+        }
+
+        return null;
+    }
+
+    private String cleanCommentValue(String val) {
+        if (val == null) return "";
+        // 移除：COMMENT单词、等号、单引号、双引号、逗号、分号
+        return val.replaceAll("(?i)COMMENT|\\s|=|[',;]|\"", "").trim();
     }
 }

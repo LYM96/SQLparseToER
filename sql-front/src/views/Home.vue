@@ -8,7 +8,7 @@
             <h1>SQL to ER</h1>
           </div>
           <div class="header-right">
-            <a href="https://github.com/yourusername/sql-to-er" target="_blank" class="github-link">
+            <a href="https://github.com/LYM96/SQLparseToER.git" target="_blank" class="github-link">
               <i class="el-icon-platform-eleme"></i>
               <span>GitHub</span>
             </a>
@@ -68,7 +68,7 @@ export default {
         console.log('发送的原始SQL语句:', sql)
 
         // 发送原始SQL语句到服务器
-        const response = await axios.post('http://localhost:8080/api/er-diagram/parse', 
+        const response = await axios.post('http://localhost:8085/api/er-diagram/parse', 
           { sql },
           {
             headers: {
