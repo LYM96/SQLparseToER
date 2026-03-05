@@ -118,3 +118,64 @@ Copyright © 2025 [codeMaster]
 │
 └── README.md        # 项目说明文档
 ```
+
+## 实例
+-- 1. 用户基础表
+CREATE TABLE `yonghu` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '用户主键',
+  `zhanghao` varchar(200) NOT NULL COMMENT '账号',
+  `xingming` varchar(200) NOT NULL COMMENT '姓名',
+  `jifen` double DEFAULT 0 COMMENT '当前积分',
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `idx_zhanghao` (`zhanghao`)
+) COMMENT = '用户表';
+
+-- 2. 垃圾识别记录 (关联用户)
+CREATE TABLE `lajishibie` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `lajimingcheng` varchar(200) NOT NULL COMMENT '垃圾名称',
+  `lajifenlei` varchar(200) NOT NULL COMMENT '垃圾分类',
+  `userid` bigint NOT NULL COMMENT '用户ID',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_shibie_user` FOREIGN KEY (`userid`) REFERENCES `yonghu` (`id`)
+) COMMENT = '垃圾识别记录';
+
+-- 3. 垃圾投放记录 (关联用户账号)
+CREATE TABLE `lajitoufang` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `zhandianmingcheng` varchar(200) DEFAULT NULL COMMENT '站点名称',
+  `lajimingcheng` varchar(200) NOT NULL COMMENT '垃圾名称',
+  `zhanghao` varchar(200) DEFAULT NULL COMMENT '用户账号',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_toufang_user` FOREIGN KEY (`zhanghao`) REFERENCES `yonghu` (`zhanghao`)
+) COMMENT = '垃圾投放记录';
+
+-- 4. 积分商品表
+CREATE TABLE `jifenshangpin` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '商品主键',
+  `shangpinmingcheng` varchar(200) NOT NULL COMMENT '商品名称',
+  `jifen` double NOT NULL COMMENT '所需积分',
+  PRIMARY KEY (`id`)
+) COMMENT = '积分商品';
+
+-- 5. 积分兑换 (双向关联：关联用户与商品)
+CREATE TABLE `jifenduihuan` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '兑换主键',
+  `userid` bigint NOT NULL COMMENT '用户ID',
+  `shangpinid` bigint NOT NULL COMMENT '商品ID',
+  `duihuanriqi` date DEFAULT NULL COMMENT '兑换日期',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_duihuan_user` FOREIGN KEY (`userid`) REFERENCES `yonghu` (`id`),
+  CONSTRAINT `fk_duihuan_shangpin` FOREIGN KEY (`shangpinid`) REFERENCES `jifenshangpin` (`id`)
+) COMMENT = '积分兑换记录';
+
+-- 6. 收藏表 (关联用户)
+CREATE TABLE `storeup` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `userid` bigint NOT NULL COMMENT '用户ID',
+  `refid` bigint DEFAULT NULL COMMENT '关联目标ID',
+  `tablename` varchar(200) DEFAULT NULL COMMENT '关联表名',
+  `name` varchar(200) NOT NULL COMMENT '名称',
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_storeup_user` FOREIGN KEY (`userid`) REFERENCES `yonghu` (`id`)
+) COMMENT = '收藏表';
